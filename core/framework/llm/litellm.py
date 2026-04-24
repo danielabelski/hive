@@ -451,9 +451,7 @@ def _extract_cost(response: Any, model: str) -> float:
         input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         cache_read, cache_creation = _extract_cache_tokens(usage)
-        fallback = _cost_from_catalog_pricing(
-            model, input_tokens, output_tokens, cache_read, cache_creation
-        )
+        fallback = _cost_from_catalog_pricing(model, input_tokens, output_tokens, cache_read, cache_creation)
         if fallback > 0:
             return fallback
     return 0.0
@@ -491,9 +489,7 @@ def _cost_from_tokens(
             return float(total)
     except Exception as exc:
         logger.debug("[cost] cost_per_token failed for %s: %s", model, exc)
-    return _cost_from_catalog_pricing(
-        model, input_tokens, output_tokens, cached_tokens, cache_creation_tokens
-    )
+    return _cost_from_catalog_pricing(model, input_tokens, output_tokens, cached_tokens, cache_creation_tokens)
 
 
 def _extract_cache_tokens(usage: Any) -> tuple[int, int]:
@@ -524,11 +520,9 @@ def _extract_cache_tokens(usage: Any) -> tuple[int, int]:
         if _details is not None
         else getattr(usage, "cache_read_input_tokens", 0) or 0
     )
-    cache_creation = (
-        getattr(_details, "cache_write_tokens", 0) or 0
-        if _details is not None
-        else 0
-    ) or (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    cache_creation = (getattr(_details, "cache_write_tokens", 0) or 0 if _details is not None else 0) or (
+        getattr(usage, "cache_creation_input_tokens", 0) or 0
+    )
     return cache_read, cache_creation
 
 
@@ -2411,8 +2405,7 @@ class LiteLLMProvider(LLMProvider):
                             output_tokens = getattr(usage, "completion_tokens", 0) or 0
                             cached_tokens, cache_creation_tokens = _extract_cache_tokens(usage)
                             logger.debug(
-                                "[tokens] finish-chunk usage: input=%d output=%d "
-                                "cached=%d cache_creation=%d model=%s",
+                                "[tokens] finish-chunk usage: input=%d output=%d cached=%d cache_creation=%d model=%s",
                                 input_tokens,
                                 output_tokens,
                                 cached_tokens,
@@ -2421,8 +2414,7 @@ class LiteLLMProvider(LLMProvider):
                             )
 
                         logger.debug(
-                            "[tokens] finish event: input=%d output=%d cached=%d "
-                            "cache_creation=%d stop=%s model=%s",
+                            "[tokens] finish event: input=%d output=%d cached=%d cache_creation=%d stop=%s model=%s",
                             input_tokens,
                             output_tokens,
                             cached_tokens,

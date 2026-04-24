@@ -1393,7 +1393,8 @@ class TestExtractCacheTokens:
         client's perspective)."""
         usage = MagicMock(spec=["prompt_tokens_details", "cache_creation_input_tokens"])
         usage.prompt_tokens_details = MagicMock(
-            spec=["cached_tokens"], cached_tokens=120,
+            spec=["cached_tokens"],
+            cached_tokens=120,
         )
         usage.cache_creation_input_tokens = 0
         cache_read, cache_creation = _extract_cache_tokens(usage)
@@ -1408,7 +1409,8 @@ class TestExtractCacheTokens:
         OpenRouter responses, so this is the path that matters in practice."""
         usage = MagicMock()
         usage.prompt_tokens_details = MagicMock(
-            cached_tokens=80, cache_write_tokens=50,
+            cached_tokens=80,
+            cache_write_tokens=50,
         )
         # Explicitly set the Anthropic-native field to 0 to prove we don't
         # depend on it for OpenRouter responses.
@@ -1423,7 +1425,8 @@ class TestExtractCacheTokens:
         the fallback so non-OpenRouter Anthropic continues to work."""
         usage = MagicMock(spec=["prompt_tokens_details", "cache_creation_input_tokens"])
         usage.prompt_tokens_details = MagicMock(
-            spec=["cached_tokens"], cached_tokens=80,
+            spec=["cached_tokens"],
+            cached_tokens=80,
         )
         usage.cache_creation_input_tokens = 50
         cache_read, cache_creation = _extract_cache_tokens(usage)
@@ -1471,7 +1474,8 @@ class TestStreamingChunksFallbackPreservesCacheFields:
         last_chunk = MagicMock()
         last_chunk.usage = MagicMock()
         last_chunk.usage.prompt_tokens_details = MagicMock(
-            cached_tokens=0, cache_write_tokens=5601,
+            cached_tokens=0,
+            cache_write_tokens=5601,
         )
         last_chunk.usage.cache_creation_input_tokens = 0
         chunks = [empty_usage_chunk, empty_usage_chunk, last_chunk]
@@ -1498,7 +1502,8 @@ class TestStreamingChunksFallbackPreservesCacheFields:
         last_chunk = MagicMock()
         last_chunk.usage = MagicMock()
         last_chunk.usage.prompt_tokens_details = MagicMock(
-            cached_tokens=5601, cache_write_tokens=0,
+            cached_tokens=5601,
+            cache_write_tokens=0,
         )
         last_chunk.usage.cache_creation_input_tokens = 0
 

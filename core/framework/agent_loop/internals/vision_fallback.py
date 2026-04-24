@@ -219,10 +219,7 @@ async def caption_tool_image(
         # Don't dump the base64 image data into the log file — that
         # would balloon the jsonl with mostly-binary noise.
         elided_blocks: list[dict[str, Any]] = [{"type": "text", "text": intent}]
-        elided_blocks.extend(
-            {"type": "image_url", "image_url": {"url": "<elided>"}}
-            for _ in range(len(image_content))
-        )
+        elided_blocks.extend({"type": "image_url", "image_url": {"url": "<elided>"}} for _ in range(len(image_content)))
         log_llm_turn(
             node_id="vision_fallback_subagent",
             stream_id="vision_fallback",

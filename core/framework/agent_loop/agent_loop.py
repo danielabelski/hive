@@ -3456,9 +3456,7 @@ class AgentLoop(AgentProtocol):
                         tc.tool_name,
                         tc.tool_input or {},
                     )
-                    caption_tasks[tc.tool_use_id] = asyncio.create_task(
-                        _captioning_chain(intent, res.image_content)
-                    )
+                    caption_tasks[tc.tool_use_id] = asyncio.create_task(_captioning_chain(intent, res.image_content))
 
             for tc in tool_calls[:executed_in_batch]:
                 result = results_by_id.get(tc.tool_use_id)
@@ -3492,8 +3490,7 @@ class AgentLoop(AgentProtocol):
                     if caption:
                         vision_fallback_marker = f"[vision-fallback caption]\n{caption}"
                         logger.info(
-                            "vision_fallback: captioned %d image(s) for tool '%s' "
-                            "(model '%s' routed through fallback)",
+                            "vision_fallback: captioned %d image(s) for tool '%s' (model '%s' routed through fallback)",
                             len(image_content),
                             tc.tool_name,
                             ctx.llm.model if ctx.llm else "?",
