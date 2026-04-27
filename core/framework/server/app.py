@@ -344,6 +344,7 @@ def create_app(model: str | None = None) -> web.Application:
     app.router.add_get("/api/browser/status/stream", handle_browser_status_stream)
 
     # Register route modules
+    from framework.server.routes_colonies import register_routes as register_colonies_routes
     from framework.server.routes_colony_tools import register_routes as register_colony_tools_routes
     from framework.server.routes_colony_workers import register_routes as register_colony_worker_routes
     from framework.server.routes_config import register_routes as register_config_routes
@@ -370,6 +371,7 @@ def create_app(model: str | None = None) -> web.Application:
     register_log_routes(app)
     register_queen_routes(app)
     register_queen_tools_routes(app)
+    register_colonies_routes(app)
     register_colony_tools_routes(app)
     register_mcp_routes(app)
     register_colony_worker_routes(app)
