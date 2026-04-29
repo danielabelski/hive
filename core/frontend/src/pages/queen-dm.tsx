@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Loader2, Minus, Plus } from "lucide-react";
+import { Minus, Plus } from "lucide-react";
 import ChatPanel, {
   type ChatMessage,
   type ImageContent,
@@ -923,19 +923,6 @@ export default function QueenDM() {
     <div className="flex flex-col h-full">
       {/* Chat */}
       <div className="flex-1 min-h-0 relative">
-        {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">
-                {selectedSessionParam?.startsWith("session_")
-                  ? "Connecting to session..."
-                  : `Connecting to ${queenName}...`}
-              </span>
-            </div>
-          </div>
-        )}
-
         <ChatPanel
           messages={messages}
           onSend={handleSend}
@@ -945,7 +932,10 @@ export default function QueenDM() {
           activeThread="queen-dm"
           isWaiting={isTyping && !isStreaming}
           isBusy={isTyping}
-          disabled={loading || !queenReady}
+          // Keep the textarea typable while the queen is warming up so the
+          // user can compose a follow-up immediately. Send stays locked
+          // until the session is live and the queen is ready.
+          sendLocked={loading || !queenReady}
           queenPhase={queenPhase}
           showQueenPhaseBadge
           pendingQuestions={awaitingInput ? pendingQuestions : null}
