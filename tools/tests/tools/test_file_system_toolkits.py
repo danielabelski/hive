@@ -86,76 +86,56 @@ def mock_secure_path(tmp_path):
                                         yield
 
 
-class TestListDirTool:
-    """Tests for list_dir tool."""
+class TestSandboxedSearchFiles:
+    """Tests for the agent-sandboxed search_files registration (formerly list_dir)."""
 
     @pytest.fixture
-    def list_dir_fn(self, mcp):
+    def search_files_fn(self, mcp):
         from aden_tools.tools.file_system_toolkits.list_dir import register_tools
 
         register_tools(mcp)
-        return mcp._tool_manager._tools["list_dir"].fn
+        return mcp._tool_manager._tools["search_files"].fn
 
-    def test_list_directory(self, list_dir_fn, mock_workspace, mock_secure_path, tmp_path):
-        """Listing a directory returns all entries."""
-        # Create test files and directories
+    def test_files_mode_lists_entries(self, search_files_fn, mock_workspace, mock_secure_path, tmp_path):
+        """target='files' returns every file in the sandbox, one per line."""
         (tmp_path / "file1.txt").write_text("content", encoding="utf-8")
         (tmp_path / "file2.txt").write_text("content", encoding="utf-8")
         (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "nested.txt").write_text("x", encoding="utf-8")
 
-        result = list_dir_fn(path=".", **mock_workspace)
+        result = search_files_fn(pattern="*", target="files", path=".", **mock_workspace)
 
-        assert result["success"] is True
-        assert result["total_count"] == 3
-        assert len(result["entries"]) == 3
+        assert "file1.txt" in result
+        assert "file2.txt" in result
+        # rg --files / os.walk return files only, so subdir itself isn't listed,
+        # but its contents are.
+        assert "nested.txt" in result
 
-        # Check that entries have correct structure
-        for entry in result["entries"]:
-            assert "name" in entry
-            assert "type" in entry
-            assert entry["type"] in ["file", "directory"]
+    def test_files_mode_glob_filter(self, search_files_fn, mock_workspace, mock_secure_path, tmp_path):
+        """target='files' with a glob restricts the listing."""
+        (tmp_path / "a.py").write_text("x", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("x", encoding="utf-8")
 
-    def test_list_empty_directory(self, list_dir_fn, mock_workspace, mock_secure_path, tmp_path):
-        """Listing an empty directory returns empty list."""
-        empty_dir = tmp_path / "empty"
-        empty_dir.mkdir()
+        result = search_files_fn(pattern="*.py", target="files", path=".", **mock_workspace)
+        assert "a.py" in result
+        assert "b.txt" not in result
 
-        result = list_dir_fn(path="empty", **mock_workspace)
+    def test_nonexistent_path_returns_error_string(self, search_files_fn, mock_workspace, mock_secure_path):
+        """Missing path returns an Error: string, not a dict."""
+        result = search_files_fn(pattern="*", target="files", path="nonexistent_dir", **mock_workspace)
+        assert isinstance(result, str)
+        assert "Error" in result
+        assert "not found" in result.lower()
 
-        assert result["success"] is True
-        assert result["total_count"] == 0
-        assert result["entries"] == []
+    def test_content_mode_finds_matches(self, search_files_fn, mock_workspace, mock_secure_path, tmp_path):
+        """target='content' searches inside files and returns rel-path matches."""
+        (tmp_path / "hello.txt").write_text("needle here\n", encoding="utf-8")
+        (tmp_path / "other.txt").write_text("nothing\n", encoding="utf-8")
 
-    def test_list_nonexistent_directory(self, list_dir_fn, mock_workspace, mock_secure_path):
-        """Listing a non-existent directory returns error."""
-        result = list_dir_fn(path="nonexistent_dir", **mock_workspace)
-
-        assert "error" in result
-        assert "not found" in result["error"].lower()
-
-    def test_list_directory_with_file_sizes(self, list_dir_fn, mock_workspace, mock_secure_path, tmp_path):
-        """Listing a directory returns file sizes for files."""
-        (tmp_path / "small.txt").write_text("hi", encoding="utf-8")
-        (tmp_path / "larger.txt").write_text("hello world", encoding="utf-8")
-        (tmp_path / "subdir").mkdir()
-
-        result = list_dir_fn(path=".", **mock_workspace)
-
-        assert result["success"] is True
-
-        # Find entries by name
-        entries_by_name = {e["name"]: e for e in result["entries"]}
-
-        # Files should have size_bytes
-        assert entries_by_name["small.txt"]["type"] == "file"
-        assert entries_by_name["small.txt"]["size_bytes"] == 2
-
-        assert entries_by_name["larger.txt"]["type"] == "file"
-        assert entries_by_name["larger.txt"]["size_bytes"] == 11
-
-        # Directories should have None for size_bytes
-        assert entries_by_name["subdir"]["type"] == "directory"
-        assert entries_by_name["subdir"]["size_bytes"] is None
+        result = search_files_fn(pattern="needle", target="content", path=".", **mock_workspace)
+        assert "hello.txt" in result
+        assert "needle" in result
+        assert "other.txt" not in result
 
 
 class TestReplaceFileContentTool:

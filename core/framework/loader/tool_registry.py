@@ -71,7 +71,7 @@ class ToolRegistry:
         {
             # File system reads
             "read_file",
-            "list_directory",
+            "search_files",
             "grep",
             "glob",
             # Web reads

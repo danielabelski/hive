@@ -29,7 +29,6 @@ _ALWAYS_AVAILABLE_TOOLS: frozenset[str] = frozenset(
         "read_file",
         "write_file",
         "edit_file",
-        "list_directory",
         "search_files",
         "hashline_edit",
         "set_output",

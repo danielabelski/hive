@@ -37,11 +37,11 @@ logger = logging.getLogger(__name__)
 
 _TOOL_CATEGORIES: dict[str, list[str]] = {
     # Read-only file operations — safe baseline for every knowledge queen.
+    # search_files is unified: covers content grep AND directory listing
+    # via target='content' / target='files'. It replaces list_directory,
+    # list_dir, and list_files.
     "file_read": [
         "read_file",
-        "list_directory",
-        "list_dir",
-        "list_files",
         "search_files",
         "grep_search",
         "pdf_read",
@@ -80,23 +80,6 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
     ],
     # Browser automation — every tool from the gcu-tools MCP server.
     "browser": ["@server:gcu-tools"],
-    # External research / information-gathering.
-    "research": [
-        "search_papers",
-        "download_paper",
-        "search_wikipedia",
-        "web_scrape",
-    ],
-    # Security scanners — pentest-ish, only for engineering/security roles.
-    "security": [
-        "dns_security_scan",
-        "http_headers_scan",
-        "port_scan",
-        "ssl_tls_scan",
-        "subdomain_enumerate",
-        "tech_stack_detect",
-        "risk_score",
-    ],
     # Lightweight context helpers — good default for every queen.
     "time_context": [
         "get_current_time",

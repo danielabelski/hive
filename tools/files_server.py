@@ -2,8 +2,9 @@
 """
 File Tools MCP Server
 
-Minimal FastMCP server exposing 6 file tools (read_file, write_file, edit_file,
-list_directory, search_files, run_command) with no path sandboxing.
+Minimal FastMCP server exposing 5 file tools (read_file, write_file, edit_file,
+hashline_edit, search_files) with no path sandboxing. ``search_files`` is
+unified — covers grep, find, and ls via target='content' / target='files'.
 
 Usage:
     # Run with STDIO transport (for agent integration)
@@ -82,7 +83,7 @@ def main() -> None:
 
     if not args.stdio:
         logger.info(
-            "Registered 6 file tools: read_file, write_file, edit_file, list_directory, search_files, run_command"
+            "Registered 5 file tools: read_file, write_file, edit_file, hashline_edit, search_files"
         )
 
     if args.stdio:

@@ -43,7 +43,6 @@ _WORKER_INHERITED_TOOLS: frozenset[str] = frozenset(
         "write_file",
         "edit_file",
         "hashline_edit",
-        "list_directory",
         "search_files",
         "undo_changes",
         # Shell

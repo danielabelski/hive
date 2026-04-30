@@ -7,7 +7,7 @@ Provides file I/O capabilities so GCU subagents can read spillover files
 Adapted from coder_tools_server.py for the GCU context:
 - No project root restriction (accepts absolute paths)
 - No git snapshots
-- Focused on read_file, list_directory, search_files
+- Focused on read_file, search_files (search_files = grep+find+ls)
 """
 
 from fastmcp import FastMCP

@@ -1,8 +1,12 @@
 """
 Shared file operation tools for MCP servers.
 
-Provides 7 tools (read_file, write_file, edit_file, hashline_edit,
-list_directory, search_files, run_command) plus supporting helpers.
+Provides 5 tools (read_file, write_file, edit_file, hashline_edit,
+search_files) plus supporting helpers. ``search_files`` is unified —
+it covers both content grep (``target='content'``) and file listing
+(``target='files'``), replacing the older ``list_directory`` tool and
+the LLM's choice between grep/find/ls.
+
 Used by both files_server.py (unsandboxed) and coder_tools_server.py
 (project-root sandboxed with git snapshots).
 
@@ -107,6 +111,285 @@ BINARY_EXTENSIONS = frozenset(
         ".obj",
     }
 )
+
+# ── search_files anti-loop tracker ────────────────────────────────────────
+#
+# Process-level memory of the most recent search_files call per task. When
+# the same query (target+pattern+path+glob+pagination+output) is repeated
+# back-to-back, we warn the model on the 3rd hit and block on the 4th.
+# Mirrors the Hermes design — see scripts/hermes_search_files.md.
+
+import threading as _threading
+
+_SEARCH_TRACKER_LOCK = _threading.Lock()
+_SEARCH_TRACKER: dict[str, dict] = {}
+
+# Skip set shared by both search targets — common build/cache dirs that are
+# almost never what the model wants to walk.
+_SEARCH_SKIP_DIRS = frozenset(
+    {".git", "__pycache__", "node_modules", ".venv", ".tox", ".mypy_cache", ".ruff_cache"}
+)
+
+
+def _relativize(path: str, root: str | None) -> str:
+    """Best-effort relative path; falls back to the original on cross-volume."""
+    if not root:
+        return path
+    try:
+        norm_path = os.path.normpath(path.replace("/", os.sep))
+        norm_root = os.path.normpath(root.replace("/", os.sep))
+        return os.path.relpath(norm_path, norm_root)
+    except ValueError:
+        return path
+
+
+def _do_search_files_target(
+    pattern: str,
+    resolved: str,
+    display_root: str,
+    limit: int,
+    offset: int,
+) -> str:
+    """target='files': enumerate files matching a glob, mtime-sorted (newest first)."""
+    if not os.path.isdir(resolved):
+        return f"Error: Directory not found: {resolved}"
+
+    glob = pattern or "*"
+    files: list[tuple[float, str]] = []
+
+    # Try ripgrep --files first; it respects .gitignore which is what we want.
+    try:
+        cmd = [
+            "rg",
+            "--files",
+            "--no-messages",
+            "--hidden",
+            "--glob=!.git/*",
+        ]
+        if glob and glob != "*":
+            cmd.extend(["--glob", glob])
+        cmd.append(resolved)
+        rg = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+        )
+        if rg.returncode <= 1:
+            for raw in rg.stdout.splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    files.append((os.path.getmtime(raw), raw))
+                except OSError:
+                    continue
+        else:
+            files = []
+    except FileNotFoundError:
+        # ripgrep absent — fall through to os.walk
+        files = []
+    except subprocess.TimeoutExpired:
+        return "Error: file listing timed out after 30 seconds"
+
+    # Python fallback (also runs when rg returned nothing on platforms where
+    # rg.returncode reports >1 for "no files in glob").
+    if not files:
+        for root, dirs, fnames in os.walk(resolved):
+            dirs[:] = [d for d in dirs if d not in _SEARCH_SKIP_DIRS and not d.startswith(".")]
+            for fname in fnames:
+                if fname.startswith("."):
+                    continue
+                if glob and glob != "*" and not fnmatch.fnmatch(fname, glob):
+                    continue
+                full = os.path.join(root, fname)
+                try:
+                    files.append((os.path.getmtime(full), full))
+                except OSError:
+                    continue
+
+    files.sort(reverse=True)
+    total = len(files)
+    page = files[offset : offset + max(0, int(limit))]
+    if not page:
+        return "No files found." if total == 0 else f"No files at offset {offset} (total: {total})."
+
+    lines = [_relativize(p, display_root) for _, p in page]
+    out = "\n".join(lines)
+    next_offset = offset + len(page)
+    if total > next_offset:
+        out += (
+            f"\n\n[Hint: showing {len(page)} of {total} files. "
+            f"Use offset={next_offset} for more, or narrow with a more specific glob.]"
+        )
+    return out
+
+
+def _do_search_content_target(
+    pattern: str,
+    resolved: str,
+    project_root: str | None,
+    file_glob: str,
+    limit: int,
+    offset: int,
+    output_mode: str,
+    context: int,
+    hashline: bool,
+) -> str:
+    """target='content': regex search across file contents (ripgrep + Python fallback)."""
+    display_root = project_root or (resolved if os.path.isdir(resolved) else os.path.dirname(resolved))
+    cap = max(1, int(limit))
+
+    # Try ripgrep first.
+    try:
+        cmd = ["rg", "-nH", "--no-messages", "--hidden", "--glob=!.git/*"]
+        if context and output_mode == "content":
+            cmd.extend(["-C", str(int(context))])
+        if file_glob:
+            cmd.extend(["--glob", file_glob])
+        if output_mode == "files_only":
+            cmd.append("-l")
+        elif output_mode == "count":
+            cmd.append("-c")
+        cmd.append(pattern)
+        cmd.append(resolved)
+
+        rg = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+        )
+        if rg.returncode <= 1:
+            raw_lines = [ln for ln in rg.stdout.splitlines() if ln]
+            total = len(raw_lines)
+            page = raw_lines[offset : offset + cap]
+            if not page:
+                return "No matches found." if total == 0 else f"No matches at offset {offset} (total: {total})."
+
+            formatted: list[str] = []
+            for line in page:
+                # Relativize path prefix on every line.
+                m = re.match(r"^(.+?):(\d+):(.*)$", line) if output_mode == "content" else None
+                if m:
+                    fpath, lineno, rest = m.group(1), m.group(2), m.group(3)
+                    rel = _relativize(fpath, display_root)
+                    if hashline:
+                        h = compute_line_hash(rest)
+                        line = f"{rel}:{lineno}:{h}|{rest}"
+                    else:
+                        line = f"{rel}:{lineno}:{rest}"
+                else:
+                    # files_only/count: single path (or path:count) per line
+                    head, sep, tail = line.partition(":")
+                    if sep and tail.isdigit():
+                        line = f"{_relativize(head, display_root)}:{tail}"
+                    else:
+                        line = _relativize(line, display_root)
+                if len(line) > MAX_LINE_LENGTH:
+                    line = line[:MAX_LINE_LENGTH] + "..."
+                formatted.append(line)
+
+            out = "\n".join(formatted)
+            next_offset = offset + len(page)
+            if total > next_offset:
+                out += (
+                    f"\n\n[Hint: showing {len(page)} of {total} matches. "
+                    f"Use offset={next_offset} for more, or narrow with file_glob/pattern.]"
+                )
+            return out
+    except FileNotFoundError:
+        pass  # ripgrep missing — Python fallback below
+    except subprocess.TimeoutExpired:
+        return "Error: search timed out after 30 seconds"
+
+    # Python fallback (no ripgrep): regex over file contents.
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regex: {e}"
+
+    if os.path.isfile(resolved):
+        candidates = [resolved]
+    else:
+        candidates = []
+        for root, dirs, fnames in os.walk(resolved):
+            dirs[:] = [d for d in dirs if d not in _SEARCH_SKIP_DIRS and not d.startswith(".")]
+            for fname in fnames:
+                if file_glob and not fnmatch.fnmatch(fname, file_glob):
+                    continue
+                candidates.append(os.path.join(root, fname))
+
+    # files_only / count modes need per-file aggregation.
+    if output_mode in ("files_only", "count"):
+        items: list[tuple[str, int]] = []
+        for fpath in candidates:
+            try:
+                with open(fpath, encoding="utf-8", errors="ignore") as f:
+                    n = sum(1 for line in f if compiled.search(line.rstrip()))
+            except OSError:
+                continue
+            if n:
+                items.append((fpath, n))
+        total = len(items)
+        page = items[offset : offset + cap]
+        if not page:
+            return "No matches found." if total == 0 else f"No matches at offset {offset} (total: {total})."
+        if output_mode == "files_only":
+            lines = [_relativize(p, display_root) for p, _ in page]
+        else:
+            lines = [f"{_relativize(p, display_root)}:{n}" for p, n in page]
+        out = "\n".join(lines)
+        next_offset = offset + len(page)
+        if total > next_offset:
+            out += f"\n\n[Hint: showing {len(page)} of {total}. Use offset={next_offset} for more.]"
+        return out
+
+    # output_mode == "content"
+    matches: list[str] = []
+    for fpath in candidates:
+        rel = _relativize(fpath, display_root)
+        try:
+            with open(fpath, encoding="utf-8", errors="ignore") as f:
+                buf = f.readlines()
+        except OSError:
+            continue
+        for i, raw in enumerate(buf, 1):
+            stripped = raw.rstrip()
+            if not compiled.search(stripped):
+                continue
+            if context > 0:
+                lo = max(0, i - 1 - context)
+                hi = min(len(buf), i + context)
+                ctx = []
+                for j in range(lo, hi):
+                    marker = ":" if (j + 1) == i else "-"
+                    ln = buf[j].rstrip()
+                    ctx.append(f"{rel}:{j + 1}{marker}{ln[:MAX_LINE_LENGTH]}")
+                matches.append("\n".join(ctx))
+            elif hashline:
+                h = compute_line_hash(stripped)
+                matches.append(f"{rel}:{i}:{h}|{stripped}")
+            else:
+                matches.append(f"{rel}:{i}:{stripped[:MAX_LINE_LENGTH]}")
+
+    total = len(matches)
+    page = matches[offset : offset + cap]
+    if not page:
+        return "No matches found." if total == 0 else f"No matches at offset {offset} (total: {total})."
+    out = "\n\n".join(page) if context > 0 else "\n".join(page)
+    next_offset = offset + len(page)
+    if total > next_offset:
+        out += (
+            f"\n\n[Hint: showing {len(page)} of {total} matches. "
+            f"Use offset={next_offset} for more, or narrow with file_glob/pattern.]"
+        )
+    return out
+
 
 # ── Context-aware sandboxing ─────────────────────────────────────────────────
 
@@ -603,180 +886,110 @@ def register_file_tools(
             return f"Error editing file: {e}"
 
     @mcp.tool()
-    def list_directory(path: str = ".", recursive: bool = False) -> str:
-        """List directory contents with type indicators.
+    def search_files(
+        pattern: str,
+        target: str = "content",
+        path: str = ".",
+        file_glob: str = "",
+        limit: int = 50,
+        offset: int = 0,
+        output_mode: str = "content",
+        context: int = 0,
+        hashline: bool = False,
+        task_id: str = "",
+    ) -> str:
+        """Search file contents or find files by name. Use this instead of grep, find, or ls.
 
-        Directories have a / suffix. Hidden files and common build directories
-        are skipped.
+        Two modes:
+          target='content' (default): Regex search inside files. Output modes:
+            'content' (lines+numbers, default), 'files_only' (paths only), 'count' (per-file counts).
+          target='files': Find files by glob pattern (e.g. '*.py', '*config*').
+            Also use this instead of ls — results sorted by modification time (newest first).
+
+        Pagination: limit/offset both apply; the response includes a hint with the
+        next offset when truncated. The same query repeated back-to-back is warned
+        at the 3rd call and blocked at the 4th — use the results you already have.
 
         Args:
-            path: Absolute directory path (default: current directory).
-            recursive: List recursively (default: false). Truncates at 500 entries.
+            pattern: Regex (content mode) or glob (files mode, e.g. '*.py'). For
+                an "ls"-style listing pass '*' or '*.<ext>'.
+            target: 'content' to grep inside files, 'files' to list/find files.
+                Legacy aliases: 'grep' -> 'content', 'find'/'ls' -> 'files'.
+            path: Directory (or, in content mode, a single file) to search.
+            file_glob: Restrict content search to filenames matching this glob.
+                Ignored in files mode (use ``pattern``).
+            limit: Max results to return (default 50).
+            offset: Skip first N results for pagination (default 0).
+            output_mode: Content-mode output shape — 'content' | 'files_only' | 'count'.
+            context: Lines of context before and after each match (content mode only).
+            hashline: Content mode: include N:hhhh hash anchors for hashline_edit.
+            task_id: Optional anti-loop scope key (defaults to a shared bucket).
         """
-        resolved = _resolve(path)
-        if not os.path.isdir(resolved):
-            return f"Error: Directory not found: {path}"
+        # Legacy aliases — keep older prompts working.
+        if target in ("grep",):
+            target = "content"
+        elif target in ("find", "ls"):
+            target = "files"
 
-        try:
-            skip = {
-                ".git",
-                "__pycache__",
-                "node_modules",
-                ".venv",
-                ".tox",
-                ".mypy_cache",
-                ".ruff_cache",
-            }
-            entries: list[str] = []
-            if recursive:
-                for root, dirs, files in os.walk(resolved):
-                    dirs[:] = sorted(d for d in dirs if d not in skip and not d.startswith("."))
-                    rel_root = os.path.relpath(root, resolved)
-                    if rel_root == ".":
-                        rel_root = ""
-                    for f in sorted(files):
-                        if f.startswith("."):
-                            continue
-                        entries.append(os.path.join(rel_root, f) if rel_root else f)
-                        if len(entries) >= 500:
-                            entries.append("... (truncated at 500 entries)")
-                            return "\n".join(entries)
+        if target not in ("content", "files"):
+            return f"Error: invalid target '{target}'. Use 'content' or 'files'."
+        if output_mode not in ("content", "files_only", "count"):
+            return f"Error: invalid output_mode '{output_mode}'. Use 'content', 'files_only', or 'count'."
+
+        # Anti-loop guard. Key includes everything that would change results so
+        # paginating through the same query doesn't trip the alarm.
+        key = (target, pattern, str(path), file_glob, int(limit), int(offset), output_mode, int(context))
+        bucket = task_id or "_default"
+        with _SEARCH_TRACKER_LOCK:
+            td = _SEARCH_TRACKER.setdefault(bucket, {"last_key": None, "consecutive": 0})
+            if td["last_key"] == key:
+                td["consecutive"] += 1
             else:
-                for entry in sorted(os.listdir(resolved)):
-                    if entry.startswith(".") or entry in skip:
-                        continue
-                    full = os.path.join(resolved, entry)
-                    suffix = "/" if os.path.isdir(full) else ""
-                    entries.append(f"{entry}{suffix}")
+                td["last_key"] = key
+                td["consecutive"] = 1
+            consecutive = td["consecutive"]
 
-            return "\n".join(entries) if entries else "(empty directory)"
-        except Exception as e:
-            return f"Error listing directory: {e}"
-
-    @mcp.tool()
-    def search_files(pattern: str, path: str = ".", include: str = "", hashline: bool = False) -> str:
-        """Search file contents using regex. Uses ripgrep if available.
-
-        Results sorted by file with line numbers. Set hashline=True to include
-        content-hash anchors (N:hhhh) for use with hashline_edit.
-
-        Args:
-            pattern: Regex pattern to search for.
-            path: Absolute directory path to search (default: current directory).
-            include: File glob filter (e.g. '*.py').
-            hashline: If True, include hash anchors in results (default: False).
-        """
-        resolved = _resolve(path)
-        if not os.path.isdir(resolved):
-            return f"Error: Directory not found: {path}"
-
-        # Try ripgrep first
-        try:
-            cmd = [
-                "rg",
-                "-nH",
-                "--no-messages",
-                "--hidden",
-                "--max-count=20",
-                "--glob=!.git/*",
-                pattern,
-            ]
-            if include:
-                cmd.extend(["--glob", include])
-            cmd.append(resolved)
-
-            rg_result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                encoding="utf-8",
-                stdin=subprocess.DEVNULL,
+        if consecutive >= 4:
+            return (
+                f"BLOCKED: this exact search has run {consecutive} times in a row. "
+                "Results have NOT changed. Use the information you already have and proceed."
             )
-            if rg_result.returncode <= 1:
-                output = rg_result.stdout.strip()
-                if not output:
-                    return "No matches found."
 
-                lines = []
-                for line in output.split("\n")[:SEARCH_RESULT_LIMIT]:
-                    if project_root:
-                        line = line.replace(project_root + "/", "")
-                    if hashline:
-                        # Parse file:linenum:content and insert hash anchor
-                        parts = line.split(":", 2)
-                        if len(parts) >= 3:
-                            content = parts[2]
-                            h = compute_line_hash(content)
-                            line = f"{parts[0]}:{parts[1]}:{h}|{content}"
-                    else:
-                        # Platform-agnostic relativization: ripgrep may output
-                        # forward or backslash paths; normalize before relpath (Windows).
-                        match = re.match(r"^(.+):(\d+):", line)
-                        if match:
-                            path_part, line_num, rest = (
-                                match.group(1),
-                                match.group(2),
-                                line[match.end() :],
-                            )
-                            path_part = os.path.normpath(path_part.replace("/", os.sep))
-                            proj_norm = os.path.normpath(project_root.replace("/", os.sep))
-                            try:
-                                rel = os.path.relpath(path_part, proj_norm)
-                                line = f"{rel}:{line_num}:{rest}"
-                            except ValueError:
-                                pass
-                    if len(line) > MAX_LINE_LENGTH:
-                        line = line[:MAX_LINE_LENGTH] + "..."
-                    lines.append(line)
-                total = output.count("\n") + 1
-                result_str = "\n".join(lines)
-                if total > SEARCH_RESULT_LIMIT:
-                    result_str += f"\n\n... ({total} total matches, showing first {SEARCH_RESULT_LIMIT})"
-                return result_str
-        except FileNotFoundError:
-            pass  # ripgrep not installed — fall through to Python
-        except subprocess.TimeoutExpired:
-            return "Error: Search timed out after 30 seconds"
-
-        # Fallback: Python regex
         try:
-            compiled = re.compile(pattern)
-            matches: list[str] = []
-            skip_dirs = {".git", "__pycache__", "node_modules", ".venv", ".tox"}
+            resolved = _resolve(path)
+        except Exception as e:
+            return f"Error: {e}"
 
-            for root, dirs, files in os.walk(resolved):
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                for fname in files:
-                    if include and not fnmatch.fnmatch(fname, include):
-                        continue
-                    fpath = os.path.join(root, fname)
-                    if project_root:
-                        proj_norm = os.path.normpath(project_root.replace("/", os.sep))
-                        try:
-                            display_path = os.path.relpath(fpath, proj_norm)
-                        except ValueError:
-                            display_path = fpath
-                    else:
-                        display_path = fpath
-                    try:
-                        with open(fpath, encoding="utf-8", errors="ignore") as f:
-                            for i, line in enumerate(f, 1):
-                                stripped = line.rstrip()
-                                if compiled.search(stripped):
-                                    if hashline:
-                                        h = compute_line_hash(stripped)
-                                        matches.append(f"{display_path}:{i}:{h}|{stripped}")
-                                    else:
-                                        matches.append(f"{display_path}:{i}:{stripped[:MAX_LINE_LENGTH]}")
-                                    if len(matches) >= SEARCH_RESULT_LIMIT:
-                                        return "\n".join(matches) + "\n... (truncated)"
-                    except (OSError, UnicodeDecodeError):
-                        continue
+        if target == "files":
+            result = _do_search_files_target(
+                pattern=pattern,
+                resolved=resolved,
+                display_root=project_root or resolved,
+                limit=limit,
+                offset=offset,
+            )
+        else:
+            # content mode allows a single file as path; the target=files mode does not
+            if not os.path.isdir(resolved) and not os.path.isfile(resolved):
+                return f"Error: Path not found: {path}"
+            result = _do_search_content_target(
+                pattern=pattern,
+                resolved=resolved,
+                project_root=project_root,
+                file_glob=file_glob,
+                limit=limit,
+                offset=offset,
+                output_mode=output_mode,
+                context=context,
+                hashline=hashline,
+            )
 
-            return "\n".join(matches) if matches else "No matches found."
-        except re.error as e:
-            return f"Error: Invalid regex: {e}"
+        if consecutive == 3:
+            result += (
+                f"\n\n[Warning: this exact search has run {consecutive} times consecutively. "
+                "Results have not changed — use what you have instead of re-searching.]"
+            )
+        return result
 
     @mcp.tool()
     def hashline_edit(

@@ -41,7 +41,6 @@ _QUEEN_INDEPENDENT_TOOLS = [
     "write_file",
     "edit_file",
     "hashline_edit",
-    "list_directory",
     "search_files",
     "run_command",
     "undo_changes",
@@ -60,7 +59,6 @@ _QUEEN_INDEPENDENT_TOOLS = [
 # (e.g. inspect an existing skill) before committing.
 _QUEEN_INCUBATING_TOOLS = [
     "read_file",
-    "list_directory",
     "search_files",
     "run_command",
     # Schedule lives on the colony, not on the queen session — pass it
@@ -76,7 +74,6 @@ _QUEEN_INCUBATING_TOOLS = [
 _QUEEN_WORKING_TOOLS = [
     # Read-only
     "read_file",
-    "list_directory",
     "search_files",
     "run_command",
     # Monitoring + worker dialogue
@@ -95,7 +92,6 @@ _QUEEN_WORKING_TOOLS = [
 _QUEEN_REVIEWING_TOOLS = [
     # Read-only
     "read_file",
-    "list_directory",
     "search_files",
     "run_command",
     # Status + escalation replies
@@ -249,8 +245,11 @@ re-read state.
 See "Independent execution" for the per-step flow and granularity rule.
 
 ## File I/O (coder-tools MCP)
-- read_file, write_file, edit_file, hashline_edit, list_directory, \
-search_files, run_command, undo_changes
+- read_file, write_file, edit_file, hashline_edit, search_files, \
+run_command, undo_changes
+  - search_files covers grep/find/ls in one tool: target='content' to \
+search inside files, target='files' (with a glob like '*.py') to list \
+or find files. Mtime-sorted in files mode.
 
 ## Browser Automation (gcu-tools MCP)
 - Use `browser_*` tools (browser_start, browser_navigate, browser_click, \
@@ -277,9 +276,10 @@ purpose — your job in this phase is to nail the spec, not keep doing \
 work. Available:
 
 ## Read-only inspection (coder-tools MCP)
-- read_file, list_directory, search_files, run_command — for confirming \
-details before you commit (e.g. peek at an existing skill in \
-~/.hive/skills/, sanity-check an API URL).
+- read_file, search_files, run_command — for confirming details before \
+you commit (e.g. peek at an existing skill in ~/.hive/skills/, sanity-check \
+an API URL). search_files covers both grep (target='content') and ls/find \
+(target='files', glob like '*.py').
 
 ## Approved → operational checklist (use your judgement, ask only what's missing)
 The conversation that got you here probably did NOT cover all of:
@@ -373,7 +373,8 @@ operational, not editorial.
   born from a fresh chat via start_incubating_colony.
 
 ## Read-only inspection
-- read_file, list_directory, search_files, run_command
+- read_file, search_files, run_command (search_files covers grep/find/ls \
+via target='content' or target='files')
 
 When every worker has reported (success or failure), the phase \
 auto-moves to REVIEWING. You do not need to call a transition tool \
@@ -392,7 +393,7 @@ _queen_tools_reviewing = """
 # Tools (REVIEWING mode)
 
 Workers have finished. You have:
-- Read-only: read_file, list_directory, search_files, run_command
+- Read-only: read_file, search_files, run_command (search_files = grep+find+ls)
 - get_worker_status(focus?) — Pull the final status / per-worker reports
 - list_worker_questions() / reply_to_worker(request_id, reply) — Answer any \
 late escalations still in the inbox

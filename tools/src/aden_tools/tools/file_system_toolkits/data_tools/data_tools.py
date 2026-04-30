@@ -204,105 +204,99 @@ def register_tools(mcp: FastMCP) -> None:
             return f"Error writing file: {e}"
 
     @mcp.tool()
-    def list_files(
-        path: str = ".",
-        recursive: bool = False,
-        data_dir: str = "",
-    ) -> str:
-        """List directory contents with type indicators.
-
-        Directories have a / suffix. Hidden files and common build directories
-        are skipped.
-
-        Args:
-            path: Directory path (default: data_dir).
-            recursive: List recursively (default: false).
-            data_dir: Auto-injected - the session's data directory.
-        """
-        try:
-            resolved = _resolve_path(path, data_dir)
-        except ValueError as e:
-            return f"Error: {e}"
-
-        if not os.path.isdir(resolved):
-            return f"Error: Directory not found: {path}"
-
-        try:
-            skip = {".git", "__pycache__", "node_modules", ".venv", ".tox"}
-            entries: list[str] = []
-
-            if recursive:
-                for root, dirs, files in os.walk(resolved):
-                    dirs[:] = sorted(d for d in dirs if d not in skip and not d.startswith("."))
-                    rel_root = os.path.relpath(root, resolved)
-                    if rel_root == ".":
-                        rel_root = ""
-                    for f in sorted(files):
-                        if f.startswith("."):
-                            continue
-                        entries.append(os.path.join(rel_root, f) if rel_root else f)
-                        if len(entries) >= 500:
-                            entries.append("... (truncated at 500 entries)")
-                            return "\n".join(entries)
-            else:
-                for entry in sorted(os.listdir(resolved)):
-                    if entry.startswith(".") or entry in skip:
-                        continue
-                    full = os.path.join(resolved, entry)
-                    suffix = "/" if os.path.isdir(full) else ""
-                    entries.append(f"{entry}{suffix}")
-
-            return "\n".join(entries) if entries else "(empty directory)"
-        except Exception as e:
-            return f"Error listing directory: {e}"
-
-    @mcp.tool()
     def search_files(
         pattern: str,
+        target: str = "content",
         path: str = ".",
+        file_glob: str = "",
+        limit: int = 50,
+        offset: int = 0,
+        output_mode: str = "content",
+        context: int = 0,
         data_dir: str = "",
+        agent_id: str = "",
     ) -> str:
-        """Search file contents using regex.
+        """Search file contents or find files by name. Use this instead of grep, find, or ls.
 
-        Results sorted by file with line numbers. Searches within
-        the session's data directory or ~/.hive/.
+        Sandboxed to the session's data directory and ~/.hive/.
 
-        Args:
-            pattern: Regex pattern to search for.
-            path: Directory path to search (default: data_dir).
-            data_dir: Auto-injected - the session's data directory.
+        Two modes:
+          target='content' (default): Regex search inside files.
+          target='files': Find files by glob pattern (e.g. '*.py'). Results
+            sorted by modification time (newest first) — also use this instead of ls.
+
+        See file_ops.search_files for the full parameter contract.
         """
-        import re
+        from aden_tools.file_ops import (
+            _do_search_content_target,
+            _do_search_files_target,
+            _SEARCH_TRACKER,
+            _SEARCH_TRACKER_LOCK,
+        )
+
+        # Legacy aliases
+        if target == "grep":
+            target = "content"
+        elif target in ("find", "ls"):
+            target = "files"
+
+        if target not in ("content", "files"):
+            return f"Error: invalid target '{target}'. Use 'content' or 'files'."
+        if output_mode not in ("content", "files_only", "count"):
+            return f"Error: invalid output_mode '{output_mode}'."
 
         try:
             resolved = _resolve_path(path, data_dir)
         except ValueError as e:
             return f"Error: {e}"
 
-        if not os.path.isdir(resolved):
-            return f"Error: Directory not found: {path}"
+        # Anti-loop guard scoped per agent_id (or shared bucket if absent).
+        bucket = agent_id or "_default"
+        key = (target, pattern, str(path), file_glob, int(limit), int(offset), output_mode, int(context))
+        with _SEARCH_TRACKER_LOCK:
+            td = _SEARCH_TRACKER.setdefault(bucket, {"last_key": None, "consecutive": 0})
+            if td["last_key"] == key:
+                td["consecutive"] += 1
+            else:
+                td["last_key"] = key
+                td["consecutive"] = 1
+            consecutive = td["consecutive"]
+        if consecutive >= 4:
+            return (
+                f"BLOCKED: this exact search has run {consecutive} times in a row. "
+                "Results have NOT changed. Use the information you already have and proceed."
+            )
 
-        try:
-            compiled = re.compile(pattern)
-            matches: list[str] = []
-            skip_dirs = {".git", "__pycache__", "node_modules", ".venv"}
+        # display_root: relativize against the data_dir (or the search root) so
+        # output paths read naturally inside the agent's workspace.
+        display_root = data_dir or resolved
 
-            for root, dirs, files in os.walk(resolved):
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    display_path = os.path.relpath(fpath, resolved)
-                    try:
-                        with open(fpath, encoding="utf-8", errors="ignore") as f:
-                            for i, line in enumerate(f, 1):
-                                stripped = line.rstrip()
-                                if compiled.search(stripped):
-                                    matches.append(f"{display_path}:{i}:{stripped[:2000]}")
-                                    if len(matches) >= 100:
-                                        return "\n".join(matches) + "\n... (truncated)"
-                    except (OSError, UnicodeDecodeError):
-                        continue
+        if target == "files":
+            result = _do_search_files_target(
+                pattern=pattern,
+                resolved=resolved,
+                display_root=display_root,
+                limit=limit,
+                offset=offset,
+            )
+        else:
+            if not os.path.isdir(resolved) and not os.path.isfile(resolved):
+                return f"Error: Path not found: {path}"
+            result = _do_search_content_target(
+                pattern=pattern,
+                resolved=resolved,
+                project_root=display_root,
+                file_glob=file_glob,
+                limit=limit,
+                offset=offset,
+                output_mode=output_mode,
+                context=context,
+                hashline=False,
+            )
 
-            return "\n".join(matches) if matches else "No matches found."
-        except re.error as e:
-            return f"Error: Invalid regex: {e}"
+        if consecutive == 3:
+            result += (
+                f"\n\n[Warning: this exact search has run {consecutive} times consecutively. "
+                "Results have not changed — use what you have instead of re-searching.]"
+            )
+        return result

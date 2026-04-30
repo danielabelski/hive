@@ -42,7 +42,7 @@ COMPACTABLE_TOOLS: frozenset[str] = frozenset(
         "write_file",
         "edit_file",
         "browser_screenshot",
-        "list_directory",
+        "search_files",
     }
 )
 
@@ -858,7 +858,7 @@ def build_emergency_summary(
                 if not all_files:
                     parts.append(
                         "NOTE: Large tool results may have been saved to files. "
-                        "Use list_directory to check the data directory."
+                        "Use search_files(target='files', path='.') to check the data directory."
                     )
         except Exception:
             parts.append("NOTE: Large tool results were saved to files. Use read_file(path='<path>') to read them.")

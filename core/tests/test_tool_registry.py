@@ -889,7 +889,7 @@ def test_concurrency_safe_allowlist_is_conservative():
     allowlist = ToolRegistry.CONCURRENCY_SAFE_TOOLS
 
     # Positive assertions: known-safe read operations are present.
-    for name in ("read_file", "grep", "glob", "list_directory", "web_search"):
+    for name in ("read_file", "grep", "glob", "search_files", "web_search"):
         assert name in allowlist, f"{name} should be concurrency-safe"
 
     # Negative assertions: nothing that mutates state is allowed in.
