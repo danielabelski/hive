@@ -107,13 +107,20 @@ The store has a 64 MB cap with LRU eviction. For huge outputs, prefer `shell_job
 
 ## Pipelines and complex commands
 
-For pipes, redirects, globs, and bash builtins, set `shell=True`:
+Pipes (`|`), redirects (`>`, `<`, `>>`), conditionals (`&&`, `||`, `;`), and globs (`*`, `?`, `[`) are detected automatically. You can pass them with the default `shell=False` and the runtime will transparently route through `/bin/bash -c` and surface `auto_shell: true` in the envelope:
 
 ```
-shell_exec("find . -type f -name '*.log' | xargs grep -l ERROR | head", shell=True)
+shell_exec("ps aux | sort -k3 -rn | head -40")
+  → { exit_code: 0, stdout: "...", auto_shell: true, ... }
 ```
 
-For simple `argv` commands, `shell=False` (the default) is faster and avoids quoting hazards. Naive whitespace splitting is fine for the common case; use `shell=True` when arguments contain spaces or quotes.
+For simple argv commands (no metacharacters) `shell=False` is faster and direct-execs the binary. For commands with shell features but no metacharacters that the detector catches (rare — exotic bash builtins, here-strings), pass `shell=True` explicitly:
+
+```
+shell_exec("set -e; complicated bash logic", shell=True)
+```
+
+Quoted strings work either way — the detector uses `shlex.split` which handles `"quoted args with spaces"` correctly.
 
 ## When to use what (cheat sheet)
 

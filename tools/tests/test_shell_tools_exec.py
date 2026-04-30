@@ -137,6 +137,69 @@ def test_timed_out_marker(exec_tool):
     assert result["timed_out"] is True
 
 
+def test_auto_shell_for_pipelines(exec_tool):
+    """Regression for the queen_technology session 152038 silent-mangling bug.
+
+    The agent passed shell=False (default) with a pipeline command. The naive
+    command.split() spawned the first program with the rest as junk argv —
+    `ps aux | sort ...` produced "ps: error: garbage option", and `echo "..."
+    && ps ...` produced fake-success output where echo printed the entire
+    rest of the command verbatim. Fix: detect shell metacharacters and
+    transparently route through bash -c.
+    """
+    # Case 1: pipeline. Was: ps spawned with "aux | sort ..." as argv → garbage option.
+    result = exec_tool(command="ps aux | head -1")
+    assert result["exit_code"] == 0, result
+    assert result["auto_shell"] is True
+    assert "USER" in result["stdout"] or "PID" in result["stdout"]
+    assert "garbage option" not in (result.get("stderr") or "")
+
+    # Case 2: && + pipe + awk. Was: echo printed the whole rest of the line.
+    result = exec_tool(
+        command="echo HEADER && echo line1 | head -1",
+    )
+    assert result["exit_code"] == 0, result
+    assert result["auto_shell"] is True
+    assert "HEADER" in result["stdout"]
+    assert "line1" in result["stdout"]
+    # The literal "&&" must NOT appear in stdout — that would mean echo
+    # captured it as an argument again.
+    assert "&&" not in result["stdout"]
+
+    # Case 3: redirect + glob. Was: '*' passed as a literal arg to ls.
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "a.txt"), "w") as f:
+            f.write("x")
+        with open(os.path.join(tmp, "b.txt"), "w") as f:
+            f.write("y")
+        result = exec_tool(command=f"ls {tmp}/*.txt")
+        assert result["exit_code"] == 0, result
+        assert result["auto_shell"] is True
+        assert "a.txt" in result["stdout"]
+        assert "b.txt" in result["stdout"]
+
+
+def test_no_auto_shell_for_argv_commands(exec_tool):
+    """Plain argv commands (no metacharacters) should NOT auto-route to bash.
+    Direct exec is faster and avoids quoting hazards."""
+    result = exec_tool(command="echo hello")
+    assert result["exit_code"] == 0
+    assert result["auto_shell"] is False
+    assert result["stdout"].strip() == "hello"
+
+
+def test_explicit_shell_true_unchanged(exec_tool):
+    """When the agent explicitly opts in via shell=True, auto_shell stays
+    False — auto-detection only fires for shell=False."""
+    result = exec_tool(command="echo a | tr a b", shell=True)
+    assert result["exit_code"] == 0
+    assert result["auto_shell"] is False
+    assert result["stdout"].strip() == "b"
+
+
 def test_auto_promotion(exec_tool, mcp):
     """Past auto_background_after_sec, the call returns auto_backgrounded=True."""
     from shell_tools.jobs.tools import register_job_tools

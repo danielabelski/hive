@@ -47,6 +47,7 @@ def build_exec_envelope(
     max_output_kb: int = 256,
     auto_backgrounded: bool = False,
     job_id: str | None = None,
+    auto_shell: bool = False,
 ) -> dict:
     """Construct the standard exec envelope.
 
@@ -99,6 +100,7 @@ def build_exec_envelope(
         "warning": warning,
         "auto_backgrounded": bool(auto_backgrounded),
         "job_id": job_id,
+        "auto_shell": bool(auto_shell),
     }
 
 

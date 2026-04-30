@@ -25,6 +25,7 @@ Implementation notes:
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 import threading
 import time
@@ -36,6 +37,18 @@ from shell_tools.common.limits import (
     coerce_limits,
     make_preexec_fn,
     sanitized_env,
+)
+
+
+# Tokens that indicate the user passed a shell-syntax command (pipes,
+# redirects, conditional chains) rather than an argv list. When any of
+# these appear as standalone tokens in shlex.split(command), we silently
+# route the command through /bin/bash -c instead of trying to exec it
+# directly — the alternative is spawning the first program with the rest
+# of the line as junk argv, which either errors or returns fake success
+# (e.g. `echo "..." && ps ...` → echo prints the literal command).
+_SHELL_METACHARS: frozenset[str] = frozenset(
+    {"|", "&&", "||", ";", ">", "<", ">>", "<<", "&", "2>", "2>&1", "|&"}
 )
 from shell_tools.common.ring_buffer import RingBuffer
 from shell_tools.common.truncation import build_exec_envelope
@@ -89,31 +102,53 @@ def register_exec_tools(mcp: FastMCP) -> None:
 
         Returns the standard envelope: see `shell-tools-foundations` skill.
         """
+        # Auto-detect shell-syntax commands. If the agent passes
+        # ``shell=False`` (the default) but the command contains a pipe,
+        # redirect, ``&&``, etc., naive argv splitting silently mangles
+        # it — exec the first token with the rest as junk arguments.
+        # Detect that case and transparently route through bash -c, then
+        # surface an ``auto_shell=True`` flag in the envelope so the
+        # foundational skill / agent feedback loop can learn from it.
+        auto_shell = False
         try:
-            argv: list[str] | str
             if shell:
-                argv = command
+                # User opted in; trust them.
+                pass
             else:
-                argv = command.split()
-                if not argv:
-                    return _err_envelope(command, "command was empty")
+                try:
+                    tokens = shlex.split(command, posix=True)
+                except ValueError:
+                    # Unbalanced quotes — almost certainly meant for the shell.
+                    auto_shell = True
+                    tokens = []
+                if not auto_shell:
+                    if not tokens:
+                        return _err_envelope(command, "command was empty")
+                    if any(t in _SHELL_METACHARS for t in tokens) or any(
+                        # globs that shlex left unexpanded (`*`, `?`, `[`)
+                        any(c in t for c in "*?[") and t != "[" for t in tokens
+                    ):
+                        auto_shell = True
 
             full_env = sanitized_env(env) if env is not None else None
             preexec = make_preexec_fn(coerce_limits(limits))
         except ZshRefused as e:
             return _err_envelope(command, str(e))
 
+        effective_shell: bool | str = True if auto_shell else shell
+
         # Resolve shell here so the same logic the JobManager uses applies
         # in both the inline + promoted paths.
         try:
-            resolved_shell = _resolve_shell(shell)
+            resolved_shell = _resolve_shell(effective_shell)
         except ZshRefused as e:
             return _err_envelope(command, str(e))
 
         if resolved_shell is not None:
             spawn_argv: list[str] = [resolved_shell, "-c", command]
         else:
-            spawn_argv = list(argv) if isinstance(argv, list) else [str(argv)]
+            # shell=False AND no metacharacters → safe to direct-exec.
+            spawn_argv = tokens
 
         start = time.monotonic()
         try:
@@ -208,6 +243,7 @@ def register_exec_tools(mcp: FastMCP) -> None:
                         max_output_kb=max_output_kb,
                         auto_backgrounded=True,
                         job_id=record.job_id,
+                        auto_shell=auto_shell,
                     )
                 except JobLimitExceeded:
                     # Cap reached; treat as a hard timeout rather than spin.
@@ -242,6 +278,7 @@ def register_exec_tools(mcp: FastMCP) -> None:
             timed_out=timed_out,
             signaled=(exit_code is not None and exit_code < 0),
             max_output_kb=max_output_kb,
+            auto_shell=auto_shell,
         )
 
 
@@ -262,6 +299,7 @@ def _err_envelope(command: str, message: str) -> dict:
         "warning": None,
         "auto_backgrounded": False,
         "job_id": None,
+        "auto_shell": False,
         "error": message,
     }
 
