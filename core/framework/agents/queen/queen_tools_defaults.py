@@ -36,20 +36,39 @@ logger = logging.getLogger(__name__)
 # the named entries only).
 
 _TOOL_CATEGORIES: dict[str, list[str]] = {
-    # Unified file ops — read, write, edit, search across the post-refactor
-    # files-tools MCP server (read_file, write_file, edit_file, hashline_edit,
-    # apply_patch, search_files). 
+    # Unified file ops — read, write, edit, search across the files-tools
+    # MCP server (read_file, write_file, edit_file, search_files). pdf_read
+    # lives in hive_tools so it's listed explicitly; without it queens
+    # cannot read PDF documents by default.
     "file_ops": [
         "@server:files-tools",
+        "pdf_read",
     ],
-    # Terminal + process control — engineering personas only.
-    # The terminal-tools MCP server covers foreground exec with auto-promotion,
-    # background jobs, persistent PTY sessions, and ripgrep/find search.
-    "terminal": [
-        "@server:terminal-tools",
+    # Terminal basic — the 3-tool subset queens get out of the box.
+    #   terminal_exec — foreground command execution (Bash equivalent)
+    #   terminal_rg   — ripgrep content search (Grep equivalent)
+    #   terminal_find — glob/find file listing (Glob equivalent)
+    "terminal_basic": [
+        "terminal_exec",
+        "terminal_rg",
+        "terminal_find",
+    ],
+    # Terminal advanced — the power-user tools beyond the basics. Not in
+    # any role default; opt in explicitly per-queen via the Tool Library.
+    #   terminal_job_*   — background job lifecycle (start/manage/logs)
+    #   terminal_output_get — fetch captured output from foreground exec
+    #   terminal_pty_*   — persistent PTY sessions (open/run/close)
+    "terminal_advanced": [
+        "terminal_job_start",
+        "terminal_job_manage",
+        "terminal_job_logs",
+        "terminal_output_get",
+        "terminal_pty_open",
+        "terminal_pty_run",
+        "terminal_pty_close",
     ],
     # Tabular data. CSV/Excel read/write + DuckDB SQL.
-    "advanced_spreadsheet": [
+    "spreadsheet_advanced": [
         "csv_read",
         "csv_info",
         "csv_write",
@@ -75,8 +94,6 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
         "browser_open",
         "browser_close",
         "browser_activate_tab",
-        "browser_close_all",
-        "browser_close_finished",
         "browser_navigate",
         "browser_go_back",
         "browser_go_forward",
@@ -98,7 +115,6 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
         "browser_click",
         "browser_click_coordinate",
         "browser_type",
-        "browser_fill",
         "browser_type_focused",
         "browser_press",
         "browser_press_at",
@@ -110,13 +126,32 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
         "browser_wait",
         "browser_resize",
         "browser_upload",
-        "browser_dialog",
+    ],
+    # Research — paper search, Wikipedia, ad-hoc web scrape. Pair with
+    # browser_basic for richer site-by-site research; this category is the
+    # lightweight always-available fallback.
+    "research": [
+        "search_papers",
+        "download_paper",
+        "search_wikipedia",
+        "web_scrape",
+    ],
+    # Security — defensive scanning and reconnaissance. Engineering-only
+    # surface; the rest of the queens shouldn't see port scanners.
+    "security": [
+        "port_scan",
+        "dns_security_scan",
+        "http_headers_scan",
+        "ssl_tls_scan",
+        "subdomain_enumerate",
+        "tech_stack_detect",
+        "risk_score",
     ],
     # Lightweight context helpers — good default for every queen.
     "time_context": [
         "get_current_time",
         "get_account_info",
-    ]
+    ],
 }
 
 
@@ -137,24 +172,26 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
     # Head of Technology — builds and operates systems; full toolkit.
     "queen_technology": [
         "file_ops",
-        "terminal",
+        "terminal_basic",
         "browser_basic",
         "browser_interaction",
         "research",
         "security",
         "time_context",
     ],
-    # Head of Growth — data, experiments, competitor research; no terminal/security.
+    # Head of Growth — data, experiments, competitor research; no security.
     "queen_growth": [
         "file_ops",
+        "terminal_basic",
         "browser_basic",
         "browser_interaction",
         "research",
         "time_context",
     ],
-    # Head of Product Strategy — user research + roadmaps; no terminal/security.
+    # Head of Product Strategy — user research + roadmaps; no security.
     "queen_product_strategy": [
         "file_ops",
+        "terminal_basic",
         "browser_basic",
         "browser_interaction",
         "research",
@@ -163,23 +200,26 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
     # Head of Finance — financial models (CSV/Excel heavy), market research.
     "queen_finance_fundraising": [
         "file_ops",
-        "advanced_spreadsheet",
+        "terminal_basic",
+        "spreadsheet_advanced",
         "browser_basic",
         "browser_interaction",
         "research",
         "time_context",
     ],
-    # Head of Legal — reads contracts/PDFs, researches; no terminal/data/security.
+    # Head of Legal — reads contracts/PDFs, researches; no data/security.
     "queen_legal": [
         "file_ops",
+        "terminal_basic",
         "browser_basic",
         "browser_interaction",
         "research",
         "time_context",
     ],
-    # Head of Brand & Design — visual refs, style guides; no terminal/data/security.
+    # Head of Brand & Design — visual refs, style guides; no data/security.
     "queen_brand_design": [
         "file_ops",
+        "terminal_basic",
         "browser_basic",
         "browser_interaction",
         "research",
@@ -188,6 +228,8 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
     # Head of Talent — candidate pipelines, resumes; data + browser heavy.
     "queen_talent": [
         "file_ops",
+        "terminal_basic",
+        "spreadsheet_advanced",
         "browser_basic",
         "browser_interaction",
         "research",
@@ -196,7 +238,8 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
     # Head of Operations — processes, automation, observability.
     "queen_operations": [
         "file_ops",
-        "data",
+        "terminal_basic",
+        "spreadsheet_advanced",
         "browser_basic",
         "browser_interaction",
         "research",

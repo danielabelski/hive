@@ -16,7 +16,7 @@ from pydantic import Field
 from ..bridge import get_bridge
 from ..session import _active_profile
 from ..telemetry import log_tool_call
-from .lifecycle import _contexts
+from .lifecycle import _contexts, _ensure_context
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +98,14 @@ def register_tab_tools(mcp: FastMCP) -> None:
         profile: str | None = None,
     ) -> dict:
         """
-        Open a new browser tab and navigate to the given URL.
+        Open a browser tab at the given URL — preferred entry point.
 
-        The tab is automatically added to the agent's tab group.
-        This tool waits for the page to load before returning.
+        This is the agent's primary "go to a page" tool. If no browser
+        context exists yet for the profile, one is created transparently
+        (no need to call ``browser_start`` first). The first call after
+        a fresh context reuses the seed ``about:blank`` tab; subsequent
+        calls open new tabs in the agent's tab group. Waits for the
+        page to load before returning.
 
         Args:
             url: URL to navigate to
@@ -120,13 +124,8 @@ def register_tab_tools(mcp: FastMCP) -> None:
             log_tool_call("browser_open", params, result=result)
             return result
 
-        ctx = _get_context(profile)
-        if not ctx:
-            result = {"ok": False, "error": "Browser not started. Call browser_start first."}
-            log_tool_call("browser_open", params, result=result)
-            return result
-
         try:
+            _, ctx, _ = await _ensure_context(bridge, profile)
             # Reuse the seed about:blank tab from context.create on first open
             seed_tab = ctx.pop("_seedTabId", None)
             if seed_tab is not None:

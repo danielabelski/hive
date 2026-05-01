@@ -52,6 +52,49 @@ def _clear_profile_tab_caches(ctx: dict[str, Any]) -> None:
     clear_tab_highlights(tab_ids)
 
 
+async def _ensure_context(
+    bridge: Any,
+    profile: str | None,
+) -> tuple[str, dict[str, Any], bool]:
+    """Return ``(profile_name, ctx, created)`` for ``profile``.
+
+    Lazy-creates the browser context (tab group + seed tab) the first time
+    a profile is used so URL-taking tools (``browser_open`` /
+    ``browser_navigate``) can be the agent's single cold-start entry
+    point instead of forcing an explicit ``browser_start`` round trip.
+
+    Caller must verify ``bridge`` is connected first; any failure in
+    ``bridge.create_context`` propagates so the caller's existing
+    try/except converts it to an ``{"ok": False, ...}`` result.
+    """
+    profile_name = _resolve_profile(profile)
+    existing = _contexts.get(profile_name)
+    if existing is not None:
+        return profile_name, existing, False
+
+    result = await bridge.create_context(profile_name)
+    group_id = result.get("groupId")
+    tab_id = result.get("tabId")
+
+    ctx: dict[str, Any] = {
+        "groupId": group_id,
+        "activeTabId": tab_id,
+        "_seedTabId": tab_id,  # reused by first browser_open call
+        "tabs": {tab_id} if tab_id is not None else set(),
+    }
+    _contexts[profile_name] = ctx
+
+    logger.info(
+        "Started browser context '%s': groupId=%s, tabId=%s",
+        profile_name,
+        group_id,
+        tab_id,
+    )
+    log_context_event("start", profile_name, group_id=group_id, tab_id=tab_id)
+
+    return profile_name, ctx, True
+
+
 async def shutdown_all_contexts() -> None:
     """Close all active browser contexts. Called at GCU server shutdown."""
     if not _contexts:
@@ -198,16 +241,25 @@ def register_lifecycle_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     async def browser_start(profile: str | None = None) -> dict:
         """
-        Start a browser context for the given profile.
+        Explicitly create a browser context (tab group) for ``profile``.
 
-        Creates a tab group in the user's Chrome via the Beeline extension.
-        No separate browser process is launched - uses the user's existing Chrome.
+        Most workflows do NOT need to call this directly: ``browser_open``
+        and ``browser_navigate`` lazy-create a context on first use, so a
+        single ``browser_open(url)`` covers the cold path. Reach for
+        ``browser_start`` when you want to (a) warm a profile without
+        opening a URL yet, or (b) recreate a context after
+        ``browser_stop`` to clear stale state.
+
+        No separate browser process is launched — uses the user's
+        existing Chrome via the Beeline extension.
 
         Args:
             profile: Browser profile name (default: "default")
 
         Returns:
-            Dict with start status including groupId and initial tabId
+            Dict with start status (``"started"`` on fresh creation,
+            ``"already_running"`` when a context for the profile exists),
+            including ``groupId`` and ``activeTabId``.
         """
         start = time.perf_counter()
         params = {"profile": profile}
@@ -221,53 +273,14 @@ def register_lifecycle_tools(mcp: FastMCP) -> None:
             log_tool_call("browser_start", params, result=result)
             return result
 
-        profile_name = _resolve_profile(profile)
-
-        # Check if already running
-        if profile_name in _contexts:
-            ctx = _contexts[profile_name]
+        try:
+            profile_name, ctx, created = await _ensure_context(bridge, profile)
             result = {
                 "ok": True,
-                "status": "already_running",
+                "status": "started" if created else "already_running",
                 "profile": profile_name,
                 "groupId": ctx.get("groupId"),
                 "activeTabId": ctx.get("activeTabId"),
-            }
-            log_tool_call(
-                "browser_start",
-                params,
-                result=result,
-                duration_ms=(time.perf_counter() - start) * 1000,
-            )
-            return result
-
-        try:
-            result = await bridge.create_context(profile_name)
-            group_id = result.get("groupId")
-            tab_id = result.get("tabId")
-
-            _contexts[profile_name] = {
-                "groupId": group_id,
-                "activeTabId": tab_id,
-                "_seedTabId": tab_id,  # reused by first browser_open call
-                "tabs": {tab_id} if tab_id is not None else set(),
-            }
-
-            logger.info(
-                "Started browser context '%s': groupId=%s, tabId=%s",
-                profile_name,
-                group_id,
-                tab_id,
-            )
-
-            log_context_event("start", profile_name, group_id=group_id, tab_id=tab_id)
-
-            result = {
-                "ok": True,
-                "status": "started",
-                "profile": profile_name,
-                "groupId": group_id,
-                "activeTabId": tab_id,
             }
             log_tool_call(
                 "browser_start",

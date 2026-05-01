@@ -246,9 +246,11 @@ search inside files, target='files' (with a glob like '*.py') to list \
 or find files. Mtime-sorted in files mode.
 
 ## Browser Automation (gcu-tools MCP)
-- Use `browser_*` tools (browser_start, browser_navigate, browser_click, \
-  browser_fill, browser_snapshot, <!-- vision-only -->browser_screenshot, <!-- /vision-only -->browser_scroll, \
-  browser_tabs, browser_close, browser_evaluate, etc.).
+- Use `browser_*` tools — `browser_open(url)` is the cold-start entry point \
+  (lazy-creates the context; no `browser_start` first). Then `browser_navigate`, \
+  `browser_click`, `browser_type`, `browser_snapshot`, \
+  <!-- vision-only -->`browser_screenshot`, <!-- /vision-only -->`browser_scroll`, \
+  `browser_tabs`, `browser_close`, `browser_evaluate`, etc.
 - MUST Follow the browser-automation skill protocol before using browser tools.
 
 ## Hand off to a colony

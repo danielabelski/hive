@@ -1,5 +1,5 @@
 """
-Browser advanced tools - wait, evaluate, get_text, get_attribute, resize, dialog.
+Browser advanced tools - wait, evaluate, get_text, get_attribute, resize, upload.
 
 All operations go through the Beeline extension via CDP - no Playwright required.
 """
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Literal
 
 from fastmcp import FastMCP
 
@@ -391,57 +390,6 @@ def register_advanced_tools(mcp: FastMCP) -> None:
                 "selector": selector,
                 "files": file_paths,
                 "count": len(file_paths),
-            }
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-
-    @mcp.tool()
-    async def browser_dialog(
-        action: Literal["accept", "dismiss"] = "accept",
-        prompt_text: str | None = None,
-        tab_id: int | None = None,
-        profile: str | None = None,
-        timeout_ms: int = 30000,
-    ) -> dict:
-        """
-        Handle browser dialogs (alert, confirm, prompt).
-
-        Note: Dialog handling via CDP requires Page.javascriptDialogOpening
-        event handling. This sets up a one-time handler.
-
-        Call BEFORE triggering the action that opens the dialog.
-
-        Args:
-            action: How to handle - "accept" or "dismiss"
-            prompt_text: Text for prompt dialogs (optional)
-            tab_id: Chrome tab ID (default: active tab)
-            profile: Browser profile name (default: "default")
-            timeout_ms: Timeout in ms (default: 30000)
-
-        Returns:
-            Dict with dialog handling result
-        """
-        bridge = get_bridge()
-        if not bridge or not bridge.is_connected:
-            return {"ok": False, "error": "Browser extension not connected"}
-
-        ctx = _get_context(profile)
-        if not ctx:
-            return {"ok": False, "error": "Browser not started"}
-
-        target_tab = tab_id or ctx.get("activeTabId")
-        if target_tab is None:
-            return {"ok": False, "error": "No active tab"}
-
-        try:
-            await bridge.cdp_attach(target_tab)
-            await bridge._cdp(target_tab, "Page.enable")
-
-            return {
-                "ok": True,
-                "action": "handler_set",
-                "message": "Dialog handler prepared.",
-                "suggestion": "Handle dialogs manually or use browser_evaluate.",
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}

@@ -35,16 +35,6 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "use_insert_text": {"type": "boolean", "default": True},
         },
     },
-    "browser_fill": {
-        "description": "Fill an input element (clears existing content first).",
-        "params": {
-            "selector": {"type": "string", "required": True},
-            "value": {"type": "string", "required": True},
-            "tab_id": {"type": "integer"},
-            "profile": {"type": "string"},
-            "timeout_ms": {"type": "integer", "default": 30000},
-        },
-    },
     "browser_type_focused": {
         "description": (
             "Type text into the already-focused element. Use after browser_click_coordinate "

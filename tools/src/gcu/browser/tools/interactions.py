@@ -385,48 +385,6 @@ def register_interaction_tools(mcp: FastMCP) -> None:
             return result
 
     @mcp.tool()
-    async def browser_fill(
-        selector: str,
-        value: str,
-        tab_id: int | None = None,
-        profile: str | None = None,
-        timeout_ms: int = 30000,
-        auto_snapshot_mode: AutoSnapshotMode = "simple",
-    ) -> dict:
-        """
-        Fill an input element with a value (clears existing content first).
-
-        Faster than browser_type for filling form fields.
-
-        Args:
-            selector: CSS selector for the input element
-            value: Value to fill
-            tab_id: Chrome tab ID (default: active tab)
-            profile: Browser profile name (default: "default")
-            timeout_ms: Timeout waiting for element (default: 30000)
-            auto_snapshot_mode: Controls the accessibility snapshot taken
-                0.5s after a successful fill. ``"simple"`` (the default)
-                trims unnamed structural nodes; ``"default"`` returns the
-                full tree; ``"interactive"`` returns only controls for the
-                tightest token footprint; ``"off"`` skips the capture —
-                use when batching.
-
-        Returns:
-            Dict with fill result. Includes ``snapshot`` unless
-            ``auto_snapshot_mode="off"`` or the fill failed.
-        """
-        return await browser_type(
-            selector=selector,
-            text=value,
-            tab_id=tab_id,
-            profile=profile,
-            delay_ms=0,
-            clear_first=True,
-            timeout_ms=timeout_ms,
-            auto_snapshot_mode=auto_snapshot_mode,
-        )
-
-    @mcp.tool()
     async def browser_type_focused(
         text: str,
         tab_id: int | None = None,
