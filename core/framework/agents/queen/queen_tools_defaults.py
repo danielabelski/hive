@@ -150,6 +150,11 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
         "get_current_time",
         "get_account_info",
     ],
+    # BI / financial chart + diagram rendering. Calling chart_render
+    # both embeds the chart live in chat and produces a downloadable PNG.
+    "charts": [
+        "@server:chart-tools",
+    ],
 }
 
 
@@ -178,6 +183,7 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "browser_interaction",
         "research",
         "time_context",
+        "charts",
     ],
     # Head of Growth — data, experiments, competitor research; no security.
     "queen_growth": [
@@ -187,6 +193,7 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "browser_interaction",
         "research",
         "time_context",
+        "charts",
     ],
     # Head of Product Strategy — user research + roadmaps; no security.
     "queen_product_strategy": [
@@ -196,6 +203,7 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "browser_interaction",
         "research",
         "time_context",
+        "charts",
     ],
     # Head of Finance — financial models (CSV/Excel heavy), market research.
     "queen_finance_fundraising": [
@@ -206,6 +214,7 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "browser_interaction",
         "research",
         "time_context",
+        "charts",
     ],
     # Head of Legal — reads contracts/PDFs, researches; no data/security.
     "queen_legal": [
@@ -243,6 +252,7 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "browser_basic",
         "browser_interaction",
         "time_context",
+        "charts",
     ],
 }
 
