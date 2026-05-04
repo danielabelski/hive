@@ -825,6 +825,7 @@ class ColonyRuntime:
         tools: list[Any] | None = None,
         tool_executor: Callable | None = None,
         stream_id: str | None = None,
+        profile_name: str | None = None,
     ) -> list[str]:
         """Spawn worker clones and start them in the background.
 
@@ -854,7 +855,19 @@ class ColonyRuntime:
             raise RuntimeError("ColonyRuntime is not running")
 
         from framework.agent_loop.agent_loop import AgentLoop
+        from framework.host.worker_profiles import get_worker_profile
         from framework.storage.conversation_store import FileConversationStore
+
+        # Resolve the profile binding for this spawn. ``profile_name=None``
+        # means "use the default profile"; an unknown name silently falls
+        # back to default (the legacy single-template behavior). The
+        # resolved integrations map is threaded into Worker(...) so
+        # account_overrides() can pin its MCP tool calls.
+        _resolved_profile = (
+            get_worker_profile(self._colony_id, profile_name) if profile_name else None
+        )
+        _profile_name_resolved = _resolved_profile.name if _resolved_profile else (profile_name or "")
+        _profile_integrations = dict(_resolved_profile.integrations) if _resolved_profile else {}
 
         # Resolve per-spawn vs colony-default code identity
         spawn_spec = agent_spec or self._agent_spec
@@ -1008,6 +1021,8 @@ class ColonyRuntime:
                 event_bus=self._scoped_event_bus,
                 colony_id=self._colony_id,
                 storage_path=worker_storage,
+                profile_name=_profile_name_resolved,
+                integrations=_profile_integrations,
             )
 
             self._workers[worker_id] = worker
@@ -1030,6 +1045,7 @@ class ColonyRuntime:
         tasks: list[dict[str, Any]],
         *,
         tools_override: list[Any] | None = None,
+        profile_name: str | None = None,
     ) -> list[str]:
         """Spawn a batch of parallel workers, one per task spec.
 
@@ -1055,11 +1071,15 @@ class ColonyRuntime:
             task_data = spec.get("data")
             if task_data is not None and not isinstance(task_data, dict):
                 task_data = {"value": task_data}
+            # Per-task profile_name override beats the batch-level default,
+            # so a fan-out can mix profiles (e.g. half tasks routed to
+            # Slack:work and half to Slack:personal).
             ids = await self.spawn(
                 task=task_text,
                 count=1,
                 input_data=task_data or {"task": task_text},
                 tools=tools_override,
+                profile_name=spec.get("profile_name") or profile_name,
             )
             worker_ids.extend(ids)
         return worker_ids

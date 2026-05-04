@@ -29,6 +29,8 @@ NOTION_CREDENTIALS = {
         startup_required=False,
         help_url="https://www.notion.so/my-integrations",
         description="Notion internal integration token",
+        aden_supported=True,
+        aden_provider_name="notion",
         direct_api_key_supported=True,
         api_key_instructions="""To set up Notion API access:
 1. Go to https://www.notion.so/my-integrations
