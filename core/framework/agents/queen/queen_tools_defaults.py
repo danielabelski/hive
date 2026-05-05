@@ -230,6 +230,17 @@ QUEEN_DEFAULT_CATEGORIES: dict[str, list[str]] = {
         "research",
         "context_awareness",
     ],
+    # Head of Marketing — positioning, content, competitor research, campaign
+    # performance. Charts included for funnel/audience reporting; no security.
+    "queen_marketing": [
+        "file_ops",
+        "terminal_basic",
+        "browser_basic",
+        "browser_interaction",
+        "research",
+        "context_awareness",
+        "charts",
+    ],
     # Head of Talent — candidate pipelines, resumes; data + browser heavy.
     "queen_talent": [
         "file_ops",
