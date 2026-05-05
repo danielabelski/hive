@@ -883,11 +883,7 @@ DEFAULT_QUEENS: dict[str, dict[str, Any]] = {
             {
                 "trigger": "Strategy framed as 'campaigns' instead of a system",
                 "reaction": "Reframes immediately. 'What's the engine, and where are the leakage points?'",
-            },
-            {
-                "trigger": "Marketing dismissed as 'soft' or non-strategic",
-                "reaction": "Pulls up the spreadsheet. Walks through revenue, CAC, payback, and the campaigns that drove last quarter's pipeline.",
-            },
+            }
         ],
         "world_lore": {
             "habitat": (
@@ -1461,7 +1457,7 @@ Queens:
 - queen_finance_fundraising: Financial modeling, fundraising, investor relations, cap tables, unit economics, budgeting
 - queen_legal: Contracts, IP, compliance, corporate governance, employment law, regulatory matters
 - queen_brand_design: Brand identity, visual design, UX, design systems, creative direction, messaging
-- queen_marketing: Brand storytelling, positioning, content strategy, demand generation, PR, integrated campaigns, channel strategy
+- queen_marketing: Brand storytelling, positioning, content strategy, demand generation, PR,  channel strategy
 - queen_talent: Hiring, recruiting, team building, culture, compensation, organizational design
 - queen_operations: Founder coaching, strategic decisions, leadership challenges, company growth, pivots
 
